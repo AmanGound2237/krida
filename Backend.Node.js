@@ -1,5 +1,3 @@
-// Backend for KridArt Engine with advanced Unreal-like features
-
 const express = require('express');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
@@ -9,15 +7,23 @@ const http = require('http');
 const Ammo = require('ammo.js');
 const multer = require('multer'); // For asset uploads
 const fs = require('fs');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
 // Middleware
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' })); // Limit payload size
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use('/uploads', express.static('uploads'));
+
+// Rate Limiting Middleware
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // limit each IP to 100 requests per windowMs
+});
+app.use(limiter);
 
 // MongoDB Connection
 mongoose.connect('mongodb://localhost:27017/kridart', {
@@ -48,7 +54,7 @@ const MessageSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now },
 });
 
-const User = mongoose.model('User ', UserSchema);
+const User = mongoose.model('User', UserSchema);
 const Project = mongoose.model('Project', ProjectSchema);
 const Asset = mongoose.model('Asset', AssetSchema);
 const Message = mongoose.model('Message', MessageSchema);
@@ -62,7 +68,7 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: (req, file, cb) => {
-        cb(null, `${Date.now()}-${file.originalname}`); // Fixed template literal syntax
+        cb(null, ${Date.now()}-${file.originalname});
     },
 });
 const upload = multer({ storage });
@@ -71,31 +77,39 @@ const upload = multer({ storage });
 
 // User Registration
 app.post('/api/register', async (req, res) => {
-    const { username, password } = req.body;
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = new User({ username, password: hashedPassword });
-    await user.save();
-    res.status(201).json({ message: 'User  registered' });
+    try {
+        const { username, password } = req.body;
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const user = new User({ username, password: hashedPassword });
+        await user.save();
+        res.status(201).json({ message: 'User registered' });
+    } catch (err) {
+        res.status(500).json({ message: 'Registration failed', error: err.message });
+    }
 });
 
 // User Login
 app.post('/api/login', async (req, res) => {
-    const { username, password } = req.body;
-    const user = await User.findOne({ username });
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-        return res.status(401).json({ message: 'Invalid credentials' });
+    try {
+        const { username, password } = req.body;
+        const user = await User.findOne({ username });
+        if (!user || !(await bcrypt.compare(password, user.password))) {
+            return res.status(401).json({ message: 'Invalid credentials' });
+        }
+        const token = jwt.sign({ id: user._id }, SECRET_KEY, { expiresIn: '1h' });
+        res.json({ token });
+    } catch (err) {
+        res.status(500).json({ message: 'Login failed', error: err.message });
     }
-    const token = jwt.sign({ id: user._id }, SECRET_KEY, { expiresIn: '1h' });
-    res.json({ token });
 });
 
 // Create Project
 app.post('/api/projects', async (req, res) => {
-    const { name, data } = req.body;
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(403).json({ message: 'No token provided' });
-
     try {
+        const { name, data } = req.body;
+        const token = req.headers.authorization?.split(' ')[1];
+        if (!token) return res.status(403).json({ message: 'No token provided' });
+
         const decoded = jwt.verify(token, SECRET_KEY);
         const project = new Project({ name, data, owner: decoded.id });
         await project.save();
@@ -107,10 +121,10 @@ app.post('/api/projects', async (req, res) => {
 
 // Fetch Projects
 app.get('/api/projects', async (req, res) => {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(403).json({ message: 'No token provided' });
-
     try {
+        const token = req.headers.authorization?.split(' ')[1];
+        if (!token) return res.status(403).json({ message: 'No token provided' });
+
         const decoded = jwt.verify(token, SECRET_KEY);
         const projects = await Project.find({ owner: decoded.id });
         res.json(projects);
@@ -121,13 +135,50 @@ app.get('/api/projects', async (req, res) => {
 
 // Upload Assets
 app.post('/api/assets', upload.single('file'), async (req, res) => {
-    const asset = new Asset({ name: req.file.originalname, path: req.file.path });
-    await asset.save();
-    res.status(201).json({ message: 'Asset uploaded', asset });
+    try {
+        const asset = new Asset({ name: req.file.originalname, path: req.file.path });
+        await asset.save();
+        res.status(201).json({ message: 'Asset uploaded', asset });
+    } catch (err) {
+        res.status(500).json({ message: 'Asset upload failed', error: err.message });
+    }
 });
 
 // Physics Engine Integration Example
 app.get('/api/physics-simulate', (req, res) => {
     Ammo().then(() => {
         const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
-        const dispatcher = new Ammo.bt
+        const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+        const overlappingPairCache = new Ammo.btDbvtBroadphase();
+        const solver = new Ammo.btSequentialImpulseConstraintSolver();
+        const dynamicsWorld = new Ammo.btDiscreteDynamicsWorld(
+            dispatcher,
+            overlappingPairCache,
+            solver,
+            collisionConfiguration
+        );
+        dynamicsWorld.setGravity(new Ammo.btVector3(0, -10, 0));
+        res.json({ message: 'Physics world initialized' });
+    });
+});
+
+// Chat with Socket.IO
+io.on('connection', (socket) => {
+    console.log('A user connected');
+
+    socket.on('sendMessage', async (data) => {
+        const message = new Message(data);
+        await message.save();
+        io.emit('newMessage', data);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('A user disconnected');
+    });
+});
+
+// Start Server
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(Server running on port ${PORT});
+});
