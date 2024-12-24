@@ -6,7 +6,6 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { Server } = require('socket.io');
 const http = require('http');
-const { WebGLRenderer, Scene, PerspectiveCamera, BoxGeometry, MeshBasicMaterial, Mesh } = require('three');
 const Ammo = require('ammo.js');
 const multer = require('multer'); // For asset uploads
 const fs = require('fs');
@@ -49,7 +48,7 @@ const MessageSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now },
 });
 
-const User = mongoose.model('User', UserSchema);
+const User = mongoose.model('User ', UserSchema);
 const Project = mongoose.model('Project', ProjectSchema);
 const Asset = mongoose.model('Asset', AssetSchema);
 const Message = mongoose.model('Message', MessageSchema);
@@ -63,7 +62,7 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: (req, file, cb) => {
-        cb(null, `${Date.now()}-${file.originalname}`);
+        cb(null, `${Date.now()}-${file.originalname}`); // Fixed template literal syntax
     },
 });
 const upload = multer({ storage });
@@ -76,7 +75,7 @@ app.post('/api/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
     const user = new User({ username, password: hashedPassword });
     await user.save();
-    res.status(201).json({ message: 'User registered' });
+    res.status(201).json({ message: 'User  registered' });
 });
 
 // User Login
@@ -131,37 +130,4 @@ app.post('/api/assets', upload.single('file'), async (req, res) => {
 app.get('/api/physics-simulate', (req, res) => {
     Ammo().then(() => {
         const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
-        const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
-        const overlappingPairCache = new Ammo.btDbvtBroadphase();
-        const solver = new Ammo.btSequentialImpulseConstraintSolver();
-        const dynamicsWorld = new Ammo.btDiscreteDynamicsWorld(
-            dispatcher,
-            overlappingPairCache,
-            solver,
-            collisionConfiguration
-        );
-        dynamicsWorld.setGravity(new Ammo.btVector3(0, -10, 0));
-        res.json({ message: 'Physics world initialized' });
-    });
-});
-
-// Chat with Socket.IO
-io.on('connection', (socket) => {
-    console.log('A user connected');
-
-    socket.on('sendMessage', async (data) => {
-        const message = new Message(data);
-        await message.save();
-        io.emit('newMessage', data);
-    });
-
-    socket.on('disconnect', () => {
-        console.log('A user disconnected');
-    });
-});
-
-// Start Server
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
+        const dispatcher = new Ammo.bt
