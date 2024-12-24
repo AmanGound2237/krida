@@ -1,173 +1,167 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KridArt Engine</title>
-    <link rel="stylesheet" href="styles.css">
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-</head>
-<body>
-    <header>
-        <div class="logo">
-            <h1>KridArt Engine</h1>
-        </div>
-        <nav>
-            <ul>
-                <li><a href="#home">Home</a></li>
-                <li><a href="#projects">Projects</a></li>
-                <li><a href="#gallery">Gallery</a></li>
-                <li><a href="#resources">Resources</a></li>
-                <li><a href="#community">Community</a></li>
-                <li><a href="#login">Login</a></li>
-            </ul>
-        </nav>
-    </header>
+// Backend for KridArt Engine with advanced Unreal-like features
 
-    <main>
-        <section id="home">
-            <div class="home-content">
-                <h2>Welcome to KridArt Engine</h2>
-                <p>A powerful platform for creating, managing, and sharing 3D assets and projects directly in your browser.</p>
-                <button class="primary-btn" onclick="startEngine()">Launch Engine</button>
-            </div>
-            <div class="home-illustration">
-                <img src="illustration.png" alt="KridArt Illustration">
-            </div>
-        </section>
+const express = require('express');
+const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcrypt');
+const { Server } = require('socket.io');
+const http = require('http');
+const { WebGLRenderer, Scene, PerspectiveCamera, BoxGeometry, MeshBasicMaterial, Mesh } = require('three');
+const Ammo = require('ammo.js');
+const multer = require('multer'); // For asset uploads
+const fs = require('fs');
 
-        <section id="projects">
-            <h2>My Projects</h2>
-            <div class="project-container">
-                <button class="new-project-btn" onclick="createNewProject()">+ New Project</button>
-                <!-- Dynamically populated project thumbnails -->
-            </div>
-        </section>
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
-        <section id="gallery">
-            <h2>Gallery</h2>
-            <div class="gallery-container">
-                <canvas id="galleryCanvas"></canvas>
-            </div>
-        </section>
+// Middleware
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use('/uploads', express.static('uploads'));
 
-        <section id="resources">
-            <h2>Resources</h2>
-            <ul class="resources-list">
-                <li><a href="#">Documentation</a></li>
-                <li><a href="#">Tutorials</a></li>
-                <li><a href="#">Community Assets</a></li>
-            </ul>
-        </section>
+// MongoDB Connection
+mongoose.connect('mongodb://localhost:27017/kridart', {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+}).then(() => console.log('MongoDB connected'))
+  .catch(err => console.error(err));
 
-        <section id="community">
-            <h2>Community</h2>
-            <p>Connect with other creators, share your work, and collaborate on projects.</p>
-            <div class="community-chat">
-                <textarea id="chatInput" placeholder="Type your message here..."></textarea>
-                <button class="send-message-btn" onclick="sendMessage()">Send</button>
-                <div id="chatMessages" class="chat-messages"></div>
-            </div>
-        </section>
+// Models
+const UserSchema = new mongoose.Schema({
+    username: String,
+    password: String,
+});
+const ProjectSchema = new mongoose.Schema({
+    name: String,
+    data: Object,
+    owner: String,
+    createdAt: { type: Date, default: Date.now },
+});
+const AssetSchema = new mongoose.Schema({
+    name: String,
+    path: String,
+    uploadedAt: { type: Date, default: Date.now },
+});
+const MessageSchema = new mongoose.Schema({
+    username: String,
+    message: String,
+    createdAt: { type: Date, default: Date.now },
+});
 
-        <section id="login">
-            <h2>Login</h2>
-            <form action="/api/login" method="POST" class="login-form">
-                <label for="username">Username:</label>
-                <input type="text" id="username" name="username" required>
+const User = mongoose.model('User', UserSchema);
+const Project = mongoose.model('Project', ProjectSchema);
+const Asset = mongoose.model('Asset', AssetSchema);
+const Message = mongoose.model('Message', MessageSchema);
 
-                <label for="password">Password:</label>
-                <input type="password" id="password" name="password" required>
+// JWT Secret
+const SECRET_KEY = 'your_secret_key';
 
-                <button class="primary-btn" type="submit">Login</button>
-            </form>
-        </section>
-    </main>
+// File Upload Configuration
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, 'uploads/');
+    },
+    filename: (req, file, cb) => {
+        cb(null, `${Date.now()}-${file.originalname}`);
+    },
+});
+const upload = multer({ storage });
 
-    <footer>
-        <p>&copy; 2024 KridArt Engine. All rights reserved.</p>
-    </footer>
+// Routes
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/110/three.min.js"></script>
-    <script src="scripts.js"></script>
-    <script>
-        async function startEngine() {
-            const canvas = document.getElementById('galleryCanvas');
-            const gl = canvas.getContext('webgl');
+// User Registration
+app.post('/api/register', async (req, res) => {
+    const { username, password } = req.body;
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = new User({ username, password: hashedPassword });
+    await user.save();
+    res.status(201).json({ message: 'User registered' });
+});
 
-            if (!gl) {
-                alert('WebGL not supported, please use a modern browser.');
-                return;
-            }
+// User Login
+app.post('/api/login', async (req, res) => {
+    const { username, password } = req.body;
+    const user = await User.findOne({ username });
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+        return res.status(401).json({ message: 'Invalid credentials' });
+    }
+    const token = jwt.sign({ id: user._id }, SECRET_KEY, { expiresIn: '1h' });
+    res.json({ token });
+});
 
-            const scene = new THREE.Scene();
-            const camera = new THREE.PerspectiveCamera(75, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
-            const renderer = new THREE.WebGLRenderer({ canvas });
+// Create Project
+app.post('/api/projects', async (req, res) => {
+    const { name, data } = req.body;
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(403).json({ message: 'No token provided' });
 
-            renderer.setSize(canvas.clientWidth, canvas.clientHeight);
-            document.body.appendChild(renderer.domElement);
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        const project = new Project({ name, data, owner: decoded.id });
+        await project.save();
+        res.status(201).json({ message: 'Project created', project });
+    } catch (err) {
+        res.status(403).json({ message: 'Invalid token' });
+    }
+});
 
-            const geometry = new THREE.BoxGeometry();
-            const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
-            const cube = new THREE.Mesh(geometry, material);
-            scene.add(cube);
+// Fetch Projects
+app.get('/api/projects', async (req, res) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(403).json({ message: 'No token provided' });
 
-            camera.position.z = 5;
+    try {
+        const decoded = jwt.verify(token, SECRET_KEY);
+        const projects = await Project.find({ owner: decoded.id });
+        res.json(projects);
+    } catch (err) {
+        res.status(403).json({ message: 'Invalid token' });
+    }
+});
 
-            function animate() {
-                requestAnimationFrame(animate);
-                cube.rotation.x += 0.01;
-                cube.rotation.y += 0.01;
-                renderer.render(scene, camera);
-            }
-            animate();
-        }
+// Upload Assets
+app.post('/api/assets', upload.single('file'), async (req, res) => {
+    const asset = new Asset({ name: req.file.originalname, path: req.file.path });
+    await asset.save();
+    res.status(201).json({ message: 'Asset uploaded', asset });
+});
 
-        async function createNewProject() {
-            const response = await fetch('/api/projects', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ name: 'New Project', date: new Date() }),
-            });
-            const data = await response.json();
-            if (data.success) {
-                const projectContainer = document.querySelector('.project-container');
-                const newProject = document.createElement('div');
-                newProject.className = 'project-thumbnail';
-                newProject.textContent = 'New Project';
-                projectContainer.appendChild(newProject);
-            } else {
-                alert('Error creating project.');
-            }
-        }
+// Physics Engine Integration Example
+app.get('/api/physics-simulate', (req, res) => {
+    Ammo().then(() => {
+        const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+        const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+        const overlappingPairCache = new Ammo.btDbvtBroadphase();
+        const solver = new Ammo.btSequentialImpulseConstraintSolver();
+        const dynamicsWorld = new Ammo.btDiscreteDynamicsWorld(
+            dispatcher,
+            overlappingPairCache,
+            solver,
+            collisionConfiguration
+        );
+        dynamicsWorld.setGravity(new Ammo.btVector3(0, -10, 0));
+        res.json({ message: 'Physics world initialized' });
+    });
+});
 
-        async function sendMessage() {
-            const chatInput = document.getElementById('chatInput');
-            const chatMessages = document.getElementById('chatMessages');
-            const message = chatInput.value;
+// Chat with Socket.IO
+io.on('connection', (socket) => {
+    console.log('A user connected');
 
-            if (message.trim()) {
-                const response = await fetch('/api/messages', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ message }),
-                });
-                const data = await response.json();
+    socket.on('sendMessage', async (data) => {
+        const message = new Message(data);
+        await message.save();
+        io.emit('newMessage', data);
+    });
 
-                if (data.success) {
-                    const messageElement = document.createElement('div');
-                    messageElement.textContent = message;
-                    chatMessages.appendChild(messageElement);
-                    chatInput.value = '';
-                } else {
-                    alert('Error sending message.');
-                }
-            }
-        }
-    </script>
-</body>
-</html>
+    socket.on('disconnect', () => {
+        console.log('A user disconnected');
+    });
+});
+
+// Start Server
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
