@@ -23,7 +23,8 @@ const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // limit each IP to 100 requests per windowMs
 });
-app.use(limiter);
+app.use('/api/login', limiter); // Apply to login
+app.use('/api/register', limiter); // Apply to register
 
 // MongoDB Connection
 mongoose.connect('mongodb://localhost:27017/kridart', {
@@ -68,7 +69,7 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: (req, file, cb) => {
-        cb(null, ${Date.now()}-${file.originalname});
+        cb(null, `${Date.now()}-${file.originalname}`);
     },
 });
 const upload = multer({ storage });
@@ -107,15 +108,24 @@ app.post('/api/login', async (req, res) => {
 app.post('/api/projects', async (req, res) => {
     try {
         const { name, data } = req.body;
+        
+        if (!name || !data) {
+            return res.status(400).json({ message: 'Name and data are required' });
+        }
+
         const token = req.headers.authorization?.split(' ')[1];
         if (!token) return res.status(403).json({ message: 'No token provided' });
 
-        const decoded = jwt.verify(token, SECRET_KEY);
-        const project = new Project({ name, data, owner: decoded.id });
-        await project.save();
-        res.status(201).json({ message: 'Project created', project });
+        try {
+            const decoded = jwt.verify(token, SECRET_KEY);
+            const project = new Project({ name, data, owner: decoded.id });
+            await project.save();
+            res.status(201).json({ message: 'Project created', project });
+        } catch (err) {
+            return res.status(403).json({ message: 'Invalid or expired token' });
+        }
     } catch (err) {
-        res.status(403).json({ message: 'Invalid token' });
+        res.status(500).json({ message: 'Error creating project', error: err.message });
     }
 });
 
@@ -125,17 +135,25 @@ app.get('/api/projects', async (req, res) => {
         const token = req.headers.authorization?.split(' ')[1];
         if (!token) return res.status(403).json({ message: 'No token provided' });
 
-        const decoded = jwt.verify(token, SECRET_KEY);
-        const projects = await Project.find({ owner: decoded.id });
-        res.json(projects);
+        try {
+            const decoded = jwt.verify(token, SECRET_KEY);
+            const projects = await Project.find({ owner: decoded.id });
+            res.json(projects);
+        } catch (err) {
+            return res.status(403).json({ message: 'Invalid or expired token' });
+        }
     } catch (err) {
-        res.status(403).json({ message: 'Invalid token' });
+        res.status(500).json({ message: 'Error fetching projects', error: err.message });
     }
 });
 
 // Upload Assets
 app.post('/api/assets', upload.single('file'), async (req, res) => {
     try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No file uploaded' });
+        }
+
         const asset = new Asset({ name: req.file.originalname, path: req.file.path });
         await asset.save();
         res.status(201).json({ message: 'Asset uploaded', asset });
@@ -166,6 +184,11 @@ app.get('/api/physics-simulate', (req, res) => {
 io.on('connection', (socket) => {
     console.log('A user connected');
 
+    // Send message history
+    Message.find().then(messages => {
+        socket.emit('messageHistory', messages);
+    });
+
     socket.on('sendMessage', async (data) => {
         const message = new Message(data);
         await message.save();
@@ -180,5 +203,5 @@ io.on('connection', (socket) => {
 // Start Server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(Server running on port ${PORT});
+    console.log(`Server running on port ${PORT}`);
 });
